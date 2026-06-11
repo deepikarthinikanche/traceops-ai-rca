@@ -35,8 +35,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Embedding model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Lazy-loaded embedding model (reduces startup memory for free-tier hosting)
+_model = None
+
+
+def get_model():
+    global _model
+    if _model is None:
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _model
+
 
 # ChromaDB setup (persistent storage for deployment)
 chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
@@ -65,7 +73,7 @@ def upload_logs():
         logs = [line.strip() for line in file.readlines() if line.strip()]
 
     for i, log in enumerate(logs):
-        embedding = model.encode(log).tolist()
+        embedding = get_model().encode(log).tolist()
         collection.add(
             ids=[str(i)],
             documents=[log],
@@ -77,7 +85,7 @@ def upload_logs():
 
 @app.post("/analyze-incident")
 def analyze_incident(request: QueryRequest):
-    question_embedding = model.encode(request.question).tolist()
+    question_embedding = get_model().encode(request.question).tolist()
 
     results = collection.query(
         query_embeddings=[question_embedding],
