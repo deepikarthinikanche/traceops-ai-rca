@@ -6,3 +6,5 @@ langchain-community
 python-dotenv
 sentence-transformers
 pydantic
+openai
+httpx
