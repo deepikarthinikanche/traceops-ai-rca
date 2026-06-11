@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+chromadb
+langchain
+langchain-community
+python-dotenv
+sentence-transformers
+pydantic

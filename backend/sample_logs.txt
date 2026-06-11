@@ -1,0 +1,15 @@
+ERROR API latency increased to 2500ms during inference request.
+WARN GPU memory usage reached 92%.
+ERROR CUDA out of memory occurred while running Llama 70B model.
+INFO Concurrency increased from 16 to 64.
+WARN Token throughput dropped from 3200 tokens/sec to 1400 tokens/sec.
+ERROR Request timeout occurred for multiple users.
+INFO Batch size increased during peak traffic.
+ERROR Model response time exceeded SLA threshold of 500ms.
+WARN Connection pool exhausted under high concurrency.
+ERROR Failed to allocate GPU memory for new inference batch.
+INFO Auto-scaling triggered due to request queue buildup.
+WARN Disk I/O latency spike detected on model loading path.
+ERROR Health check failed on inference worker node-3.
+INFO Rolling restart initiated for inference cluster.
+WARN Memory fragmentation detected on GPU device 0.

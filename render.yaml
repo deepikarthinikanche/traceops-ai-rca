@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: traceops-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: HF_HUB_DISABLE_SSL_VERIFY
+        value: "1"
+      - key: HF_HUB_DISABLE_XET
+        value: "1"
+      - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: "1"
