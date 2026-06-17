@@ -7,22 +7,15 @@ import os
 import ssl
 import urllib3
 from openai import OpenAI
+import httpx
 
-# Bypass SSL verification and disable xet downloader for corporate networks
-os.environ["HF_HUB_DISABLE_SSL_VERIFY"] = "1"
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-os.environ["CURL_CA_BUNDLE"] = ""
-os.environ["REQUESTS_CA_BUNDLE"] = ""
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Bypass SSL verification for corporate networks
 ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Load .env from the same directory as this file
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path, override=True)
-
-from sentence_transformers import SentenceTransformer
 
 app = FastAPI(title="TraceOps AI RCA System", version="1.0.0")
 
@@ -35,15 +28,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy-loaded embedding model (reduces startup memory for free-tier hosting)
-_model = None
+
+# Embedding setup - use TF-IDF (fully offline, no model download needed)
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+
+# Fixed vocabulary for consistent embedding dimensions
+_vectorizer = None
+_EMBEDDING_DIM = 384
 
 
-def get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
+def _get_vectorizer():
+    global _vectorizer
+    if _vectorizer is None:
+        _vectorizer = TfidfVectorizer(max_features=_EMBEDDING_DIM)
+        # Pre-fit on common log terms to ensure consistent dimensions
+        log_path = os.path.join(os.path.dirname(__file__), "sample_logs.txt")
+        with open(log_path, "r") as f:
+            corpus = [line.strip() for line in f.readlines() if line.strip()]
+        _vectorizer.fit(corpus)
+    return _vectorizer
+
+
+# OpenAI client for chat completions (RCA generation)
+_openai_client = None
+
+
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        http_client = httpx.Client(verify=False)
+        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), http_client=http_client)
+    return _openai_client
+
+
+def get_embedding(text: str) -> list[float]:
+    """Get embedding using TF-IDF vectorizer (fully offline)."""
+    vectorizer = _get_vectorizer()
+    vec = vectorizer.transform([text]).toarray()[0]
+    # Pad or truncate to fixed dimension
+    if len(vec) < _EMBEDDING_DIM:
+        vec = np.pad(vec, (0, _EMBEDDING_DIM - len(vec)))
+    return vec.tolist()
 
 
 # ChromaDB setup (persistent storage for deployment)
@@ -63,29 +89,34 @@ def home():
 
 @app.post("/upload-logs")
 def upload_logs():
-    # Clear existing collection data to avoid duplicate IDs on re-upload
-    existing = collection.get()
-    if existing["ids"]:
-        collection.delete(ids=existing["ids"])
+    import traceback
+    try:
+        global collection
+        # Delete and recreate collection to handle embedding dimension changes
+        client.delete_collection(name="logs")
+        collection = client.get_or_create_collection(name="logs")
 
-    log_path = os.path.join(os.path.dirname(__file__), "sample_logs.txt")
-    with open(log_path, "r") as file:
-        logs = [line.strip() for line in file.readlines() if line.strip()]
+        log_path = os.path.join(os.path.dirname(__file__), "sample_logs.txt")
+        with open(log_path, "r") as file:
+            logs = [line.strip() for line in file.readlines() if line.strip()]
 
-    for i, log in enumerate(logs):
-        embedding = get_model().encode(log).tolist()
-        collection.add(
-            ids=[str(i)],
-            documents=[log],
-            embeddings=[embedding],
-        )
+        for i, log in enumerate(logs):
+            embedding = get_embedding(log)
+            collection.add(
+                ids=[str(i)],
+                documents=[log],
+                embeddings=[embedding],
+            )
 
-    return {"message": "Logs uploaded successfully", "total_logs": len(logs)}
+        return {"message": "Logs uploaded successfully", "total_logs": len(logs)}
+    except Exception as e:
+        print(f"ERROR in upload_logs: {traceback.format_exc()}")
+        raise
 
 
 @app.post("/analyze-incident")
 def analyze_incident(request: QueryRequest):
-    question_embedding = get_model().encode(request.question).tolist()
+    question_embedding = get_embedding(request.question)
 
     results = collection.query(
         query_embeddings=[question_embedding],
@@ -103,7 +134,6 @@ def analyze_incident(request: QueryRequest):
 def generate_rca(question: str, related_logs: list[str]) -> dict:
     """Generate root cause analysis using RAG - retrieves relevant logs then analyzes patterns."""
     import json
-    import httpx
 
     log_context = "\n".join(related_logs)
 
@@ -111,8 +141,7 @@ def generate_rca(question: str, related_logs: list[str]) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key and api_key != "your_openai_api_key_here":
         try:
-            http_client = httpx.Client(verify=False)
-            openai_client = OpenAI(api_key=api_key, http_client=http_client)
+            openai_client = get_openai_client()
 
             prompt = f"""You are an expert Site Reliability Engineer (SRE) performing root cause analysis.
 
